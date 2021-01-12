@@ -7,7 +7,6 @@ import os
 import copy
 import argparse
 from facemesh import FaceData
-from opendr.topology import get_vert_connectivity
 import time
 
 parser = argparse.ArgumentParser(description='Tensorflow Trainer for Convolutional Mesh Autoencoders')
@@ -27,14 +26,17 @@ parser.add_argument('--viz', type=int, default=0, help='visualize while test')
 parser.add_argument('--loss', default='l1', help='l1 or l2')
 parser.add_argument('--mesh1', default='m1', help='for mesh interpolation')
 parser.add_argument('--mesh2', default='m1', help='for mesh interpolation')
+parser.add_argument('--restart', type=bool, default=True, help='restart training from zero')
 
 
 args = parser.parse_args()
 
+restart = args.restart
+
 np.random.seed(args.seed)
 nz = args.nz
 print("Loading data .. ")
-reference_mesh_file = 'data/template.obj'
+reference_mesh_file = 'data/template_ceasar.obj'
 facedata = FaceData(nVal=100, train_file=args.data+'/train.npy',
     test_file=args.data+'/test.npy', reference_mesh_file=reference_mesh_file, pca_n_comp=nz)
 
@@ -46,17 +48,19 @@ print("Generating Transform Matrices ..")
 
 M,A,D,U = mesh_sampling.generate_transform_matrices(facedata.reference_mesh, ds_factors)
 
-A = map(lambda x:x.astype('float32'), A)
-D = map(lambda x:x.astype('float32'), D)
-U = map(lambda x:x.astype('float32'), U)
-p = map(lambda x:x.shape[0], A)
+#A = list(map(lambda x:x.astype('float32'), A))
+D = list(map(lambda x:x.astype('float32'), D))
+U = list(map(lambda x:x.astype('float32'), U))
+#p = list(map(lambda x:x.shape[0], A))
+p = list(map(lambda x:x.v.shape[0], A))
 
 X_train = facedata.vertices_train.astype('float32')
 X_val = facedata.vertices_val.astype('float32')
 X_test = facedata.vertices_test.astype('float32')
 
 print("Computing Graph Laplacians ..")
-L = [graph.laplacian(a, normalized=True) for a in A]
+L = [graph.laplacian(a, mode='cotan', normalized=True) for a in A]
+L = list(map(lambda x:x.astype('float32'), L))
 
 n_train = X_train.shape[0]
 params = dict()
@@ -88,7 +92,7 @@ params['decay_rate']     = 0.99
 params['momentum']       = 0.9
 params['decay_steps']    = n_train / params['batch_size']
 
-model = models.coma(L=L, D=D, U=U, **params)
+model = models.coma(L=L, D=D, U=U, std=facedata.std, **params)
 
 if args.mode in ['test']:
     if not os.path.exists('results'):
@@ -98,11 +102,13 @@ if args.mode in ['test']:
     euclidean_loss = np.mean(np.sqrt(np.sum((facedata.std*(predictions-facedata.vertices_test))**2, axis=2)))
     print("Euclidean loss= ", euclidean_loss)
     np.save('results/'+args.name+'_predictions', predictions)
+    facedata.save_meshes(args.name+"/saved/predict", predictions)
+    facedata.save_meshes(args.name+"/saved/true", X_test)
     if args.viz:
         from psbody.mesh import MeshViewers
         viewer_recon = MeshViewers(window_width=800, window_height=1000, shape=[5, 4], titlebar='Mesh Reconstructions')
         for i in range(predictions.shape[0]/20):
-            facedata.show_mesh(viewer=viewer_recon, mesh_vecs=predictions_unperm[i*20:(i+1)*20], figsize=(5,4))
+            facedata.show_mesh(viewer=viewer_recon, mesh_vecs=predictions[i*20:(i+1)*20], figsize=(5,4))
             time.sleep(0.1)
 elif args.mode in ['sample']:
 	meshes = facedata.get_normalized_meshes(args.mesh1, args.mesh2)
@@ -116,4 +122,4 @@ else:
 		saveparams = copy.deepcopy(params)
 		saveparams['seed'] = args.seed
 		json.dump(saveparams, fp)
-	loss, t_step = model.fit(X_train, X_train, X_val, X_val)
+	loss, t_step = model.fit(X_train, X_train, X_val, X_val, restart = restart)

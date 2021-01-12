@@ -1,7 +1,8 @@
 import glob
 import os
 import numpy as np
-from psbody.mesh import Mesh, MeshViewer, MeshViewers
+#from psbody.mesh import MeshViewer, MeshViewers
+from mesh import Mesh
 import time
 from copy import deepcopy
 import random
@@ -23,7 +24,7 @@ class FaceData(object):
 		self.std = None
 
 		self.load()
-		self.reference_mesh = Mesh(filename=reference_mesh_file)
+		self.reference_mesh = Mesh(filename=reference_mesh_file) #TODO
 
 		# self.mean = np.mean(self.vertices_train, axis=0)
 		# self.std = np.std(self.vertices_train, axis=0)
@@ -62,11 +63,11 @@ class FaceData(object):
 		# self.pcaMatrix = np.dot(np.diag(eigenVals), self.pca.components_)
 		print('Vertices normalized')
 
-	def vec2mesh(self, vec):
+	def vec2mesh(self, vec): #TODO
 		vec = vec.reshape((self.n_vertex, 3))*self.std + self.mean
 		return Mesh(v=vec, f=self.reference_mesh.f)
 
-	def show(self, ids):
+	def show(self, ids): #TODO
 		'''ids: list of ids to play '''
 		if max(ids)>=self.N:
 			raise ValueError('id: out of bounds')
@@ -88,11 +89,11 @@ class FaceData(object):
 
 		return datasamples
 
-	def save_meshes(self, filename, meshes):
+	def save_meshes(self, filename, meshes): #TODO
 		for i in range(meshes.shape[0]):
 			vertices = meshes[i].reshape((self.n_vertex, 3))*self.std + self.mean
 			mesh = Mesh(v=vertices, f=self.reference_mesh.f)
-			mesh.write_ply(filename+'-'+str(i).zfill(3)+'.ply')
+			mesh.write_obj(filename+'-'+str(i).zfill(3)+'.obj')
 		return 0
 
 	def show_mesh(self, viewer, mesh_vecs, figsize):
@@ -104,7 +105,7 @@ class FaceData(object):
 		time.sleep(0.1)    # pause 0.5 seconds
 		return 0
 
-	def get_normalized_meshes(self, mesh_paths):
+	def get_normalized_meshes(self, mesh_paths): #TODO
 		meshes = []
 		for mesh_path in mesh_paths:
 			mesh = Mesh(filename=mesh_path)
@@ -113,7 +114,7 @@ class FaceData(object):
 		return np.array(meshes)
 
 
-def meshPlay(folder,every=100,wait=0.05):
+def meshPlay(folder,every=100,wait=0.05): #TODO
 	files = glob.glob(folder+'/*')
 	files.sort()
 	files = files[-1000:]
@@ -140,7 +141,8 @@ class MakeSlicedTimeDataset(object):
 		datapaths = []
 		for i in range(len(self.facial_motion_dirs)):
 			print(self.facial_motion_dirs[i])
-			datapaths += glob.glob(self.facial_motion_dirs[i]+'/*/*/*.ply')
+			datapaths += glob.glob(self.facial_motion_dirs[i]+'/**/*.obj', recursive=True)
+			datapaths += glob.glob(self.facial_motion_dirs[i]+'/**/*.mat', recursive=True)
 
 		trainpaths = []
 		testpaths = []
@@ -152,14 +154,14 @@ class MakeSlicedTimeDataset(object):
 				trainpaths += [datapaths[i]]
 
 		if opt=="train":
-			print opt+" data of size: ", len(trainpaths)
+			print(opt+" data of size: ", len(trainpaths))
 			#print(trainpaths[:10])
 			return trainpaths
 		if opt=="test":
-			print opt+" data of size: ", len(testpaths)
+			print(opt+" data of size: ", len(testpaths))
 			return testpaths
 
-	def gather_data(self, datapaths):
+	def gather_data(self, datapaths): #TODO
 		vertices = []
 		for p in tqdm(datapaths):
 			mesh_file = p
@@ -175,8 +177,8 @@ class MakeSlicedTimeDataset(object):
 		np.save(self.dataset_name+'/train', self.train_vertices)
 		np.save(self.dataset_name+'/test', self.test_vertices)
 
-		print "Saving ... ", self.dataset_name+'/train'
-		print "Saving ... ", self.dataset_name+'/test'
+		print("Saving ... ", self.dataset_name+'/train')
+		print("Saving ... ", self.dataset_name+'/test')
 		return 0
 
 class MakeIdentityExpressionDataset(object):
@@ -218,14 +220,14 @@ class MakeIdentityExpressionDataset(object):
 				trainpaths += [datapaths[i]]
 
 		if opt=="train":
-			print opt+" data of size: ", len(trainpaths)
+			print(opt+" data of size: ", len(trainpaths))
 			#print(trainpaths[:10])
 			return trainpaths
 		if opt=="test":
-			print opt+" data of size: ", len(testpaths)
+			print(opt+" data of size: ", len(testpaths))
 			return testpaths
 
-	def gather_data(self, datapaths):
+	def gather_data(self, datapaths): #TODO
 		vertices = []
 		labels = []
 		for p in tqdm(datapaths):
@@ -242,8 +244,8 @@ class MakeIdentityExpressionDataset(object):
 		np.save(self.dataset_name+'/train', self.train_vertices)
 		np.save(self.dataset_name+'/test', self.test_vertices)
 
-		print "Saving ... ", self.dataset_name+'/train'
-		print "Saving ... ", self.dataset_name+'/test'
+		print("Saving ... ", self.dataset_name+'/train')
+		print("Saving ... ", self.dataset_name+'/test')
 		return 0
 
 def generateSlicedTimeDataSet(data_path, save_path):

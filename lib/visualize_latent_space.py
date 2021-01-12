@@ -1,8 +1,8 @@
-from psbody.mesh import Mesh, MeshViewers
+#from psbody.mesh import Mesh, MeshViewers
 import readchar
 import numpy as np
 
-def visualize_latent_space(model, facedata, mesh_path=None):
+def visualize_latent_space(model, facedata, mesh_path=None): #TODO
     if mesh_path is not None:
         normalized_mesh = facedata.get_normalized_meshes([mesh_path])
     else:

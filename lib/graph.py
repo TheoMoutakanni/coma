@@ -6,6 +6,7 @@ import scipy.sparse.linalg
 import scipy.spatial.distance
 import numpy as np
 
+from connectivity import get_vert_connectivity
 
 def grid(m, dtype=np.float32):
     """Return the embedding of a grid graph."""
@@ -113,10 +114,11 @@ def replace_random_edges(A, noise_level):
     A.eliminate_zeros()
     return A
 
-
+"""
 def laplacian(W, normalized=True):
-    """Return the Laplacian of the weigth matrix."""
+    #Return the Laplacian of the weigth matrix.
 
+    
     # Degree matrix.
     d = W.sum(axis=0)
 
@@ -134,7 +136,75 @@ def laplacian(W, normalized=True):
     # assert np.abs(L - L.T).mean() < 1e-9
     assert type(L) is scipy.sparse.csr.csr_matrix
     return L
+"""
 
+def laplacian(M, mode=None, normalized=True):
+    """Return the Laplacian of the weigth matrix."""
+    if mode == 'cotan':
+        n = len(M.v)
+        W_ij = np.empty(0)
+        I = np.empty(0, np.int32)
+        J = np.empty(0, np.int32)
+        for i1, i2, i3 in [(0, 1, 2), (1, 2, 0), (2, 0, 1)]:
+            vi1 = M.f[:, i1]
+            vi2 = M.f[:, i2]
+            vi3 = M.f[:, i3]
+            u = M.v[vi2] - M.v[vi1]
+            v = M.v[vi3] - M.v[vi1]
+            
+            veclen = lambda vectors: np.sqrt(np.sum(vectors ** 2, axis=-1))
+    
+            cotan = -(u * v).sum(axis=1) / veclen(np.cross(u, v))
+            
+            #if normalized:
+            #    cotan /= np.sum(cotan)
+            
+            W_ij = np.append(W_ij, 0.5 * cotan)
+            I = np.append(I, vi2)
+            J = np.append(J, vi3)
+            W_ij = np.append(W_ij, 0.5 * cotan)
+            I = np.append(I, vi3)
+            J = np.append(J, vi2)
+        L = scipy.sparse.csr_matrix((W_ij, (I, J)), shape=(n, n))
+    
+        d = -L * np.ones(n)
+        
+        if not normalized:
+            L = scipy.sparse.spdiags(d, 0, n, n) - L
+        else:
+            d += np.spacing(np.array(0, L.dtype))
+            d = 1 / np.sqrt(d)
+            D = scipy.sparse.diags(d, 0)
+            I = scipy.sparse.identity(d.size, dtype=L.dtype)
+            L = I - D*L*D
+            #val = np.repeat(d, L.getnnz(axis=1))
+            #L.data /= val
+            
+        L = L.tocsr()
+        print(L)
+        
+        assert type(L) is scipy.sparse.csr.csr_matrix
+        return L
+
+    else: 
+        W = get_vert_connectivity(M)
+        # Degree matrix.
+        d = W.sum(axis=0)
+    
+        # Laplacian matrix.
+        if not normalized:
+            D = scipy.sparse.diags(d.A.squeeze(), 0)
+            L = D - W
+        else:
+            d += np.spacing(np.array(0, W.dtype))
+            d = 1 / np.sqrt(d)
+            D = scipy.sparse.diags(d.A.squeeze(), 0)
+            I = scipy.sparse.identity(d.size, dtype=W.dtype)
+            L = I - D * W * D
+    
+        # assert np.abs(L - L.T).mean() < 1e-9
+        assert type(L) is scipy.sparse.csr.csr_matrix
+        return L
 
 def lmax(L, normalized=True):
     """Upper-bound on the spectrum."""

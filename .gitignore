@@ -3,4 +3,7 @@ summaries/*
 logger.txt
 *.pyc
 *.npy
-
+ceasar
+checkpoints
+data
+spring

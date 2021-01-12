@@ -6,6 +6,7 @@ import scipy.sparse
 import numpy as np
 import os, time, collections, shutil
 import tensorflow.contrib.keras as keras
+from tqdm import tqdm
 
 
 #NFEATURES = 28**2
@@ -81,27 +82,38 @@ class base_model(object):
         #f1 = 100 * sklearn.metrics.f1_score(labels, predictions, average='weighted')
         #string = 'accuracy: {:.2f} ({:d} / {:d}), f1 (weighted): {:.2f}, loss: {:.2e}'.format(
         #        accuracy, ncorrects, len(labels), f1, loss)
+        euclidean_loss = np.mean(np.sqrt(np.sum((self.std*(predictions-labels))**2, axis=2)))
+        euclidean_loss = 'loss: {:.2e}'.format(euclidean_loss)
         string = 'loss: {:.2e}'.format(loss)
         if sess is None:
             string += '\ntime: {:.0f}s (wall {:.0f}s)'.format(time.clock()-t_process, time.time()-t_wall)
-        return string, loss
-
-    def fit(self, train_data, train_labels, val_data, val_labels):
+        return string, loss, euclidean_loss
+    
+    def fit(self, train_data, train_labels, val_data, val_labels, restart=True):
         t_process, t_wall = time.clock(), time.time()
-        sess = tf.Session(graph=self.graph)
+        
         shutil.rmtree(self._get_path('summaries'), ignore_errors=True)
         writer = tf.summary.FileWriter(self._get_path('summaries'), self.graph)
         shutil.rmtree(self._get_path('checkpoints'), ignore_errors=True)
         os.makedirs(self._get_path('checkpoints'))
         path = os.path.join(self._get_path('checkpoints'), 'model')
+        
+        if not restart:
+            sess = self._get_session(None)
+        else:
+            sess = tf.Session(graph=self.graph)
+            
         sess.run(self.op_init)
+        
+        # Summaries for TensorBoard.
+        summary = tf.Summary()
 
         # Training.
         accuracies = []
         losses = []
         indices = collections.deque()
         num_steps = int(self.num_epochs * train_data.shape[0] / self.batch_size)
-        for step in range(1, num_steps+1):
+        for step in tqdm(range(1, num_steps+1)):
 
             # Be sure to have used all the samples before using one a second time.
             if len(indices) < self.batch_size:
@@ -115,6 +127,8 @@ class base_model(object):
                 batch_data = batch_data.toarray()  # convert sparse matrices
             feed_dict = {self.ph_data: batch_data, self.ph_labels: batch_labels, self.ph_dropout: self.dropout}
             learning_rate, loss_average = sess.run([self.op_train, self.op_loss_average], feed_dict)
+            
+            summary.ParseFromString(sess.run(self.op_summary, feed_dict))
 
             # Periodical evaluation of the model.
             if step % self.eval_frequency == 0 or step == num_steps:
@@ -122,23 +136,23 @@ class base_model(object):
                 print('step {} / {} (epoch {:.2f} / {}):'.format(step, num_steps, epoch, self.num_epochs))
                 print('  learning_rate = {:.2e}, loss_average = {:.2e}'.format(learning_rate, loss_average))
                 #print(val_data.shape, val_labels.shape)
-                string, loss = self.evaluate(val_data, val_labels, sess)
+                string, loss, euclidean_loss = self.evaluate(val_data, val_labels, sess)
                 #accuracies.append(accuracy)
                 losses.append(loss)
                 print('  validation {}'.format(string))
+                print('  euclidiean {}'.format(euclidean_loss))
                 print('  time: {:.0f}s (wall {:.0f}s)'.format(time.clock()-t_process, time.time()-t_wall))
 
-                # Summaries for TensorBoard.
-                summary = tf.Summary()
-                summary.ParseFromString(sess.run(self.op_summary, feed_dict))
                 #summary.value.add(tag='validation/accuracy', simple_value=accuracy)
                 #summary.value.add(tag='validation/f1', simple_value=f1)
+                #summary.value.add(tag='validation/f1', simple_value=f1)
                 summary.value.add(tag='validation/loss', simple_value=loss)
-                writer.add_summary(summary, step)
                 
                 # Save model parameters (for evaluation).
                 self.op_saver.save(sess, path, global_step=step)
 
+            writer.add_summary(summary, step)
+        
         #print('validation accuracy: peak = {:.2f}, mean = {:.2f}'.format(max(accuracies), np.mean(accuracies[-10:])))
         writer.close()
         sess.close()
@@ -885,7 +899,7 @@ class cgcnn(base_model):
         return tf.transpose(x, perm=[0, 2, 1])  # N x M x Fout
 
     def fourier(self, x, L, Fout, K):
-        print K, L.shape[0]
+        print(K, L.shape[0])
         assert K == L.shape[0]  # artificial but useful to compute number of parameters
         N, M, Fin = x.get_shape()
         N, M, Fin = int(N), int(M), int(Fin)
@@ -1107,7 +1121,7 @@ class coma(base_model):
     Directories:
         dir_name: Name for directories (summaries and model parameters).
     """
-    def __init__(self, L, D, U, F, K, p, nz, nv, which_loss, F_0=1, filter='chebyshev5', brelu='b1relu', pool='mpool1',
+    def __init__(self, L, D, U, F, K, p, nz, nv, which_loss, std, F_0=1, filter='chebyshev5', brelu='b1relu', pool='mpool1',
                 unpool='poolwT', num_epochs=20, learning_rate=0.1, decay_rate=0.95, decay_steps=None, momentum=0.9,
                 regularization=0, dropout=0, batch_size=100, eval_frequency=200,
                 dir_name=''):
@@ -1119,6 +1133,10 @@ class coma(base_model):
         #p_log2 = np.where(np.array(p) > 1, np.log2(p), 0)
         #assert np.all(np.mod(p_log2, 1) == 0)  # Powers of 2.
         #assert len(L) >= 1 + np.sum(p_log2)  # Enough coarsening levels for pool sizes.
+        
+        #p = list(p)
+        print(p)
+        #D = list(D)
         
         # Keep the useful Laplacians only. May be zero.
         M_0 = L[0].shape[0]
@@ -1133,7 +1151,7 @@ class coma(base_model):
         Ngconv = len(p)
         Nfc = len(nz)
         print('NN architecture')
-        '''
+        """
         print('  input: M_0 = {}'.format(M_0))
         for i in range(Ngconv):
             print('  layer {0}: cgconv{0}'.format(i+1))
@@ -1155,7 +1173,7 @@ class coma(base_model):
             print('    weights: M_{} * M_{} = {} * {} = {}'.format(
                     Ngconv+i, Ngconv+i+1, M_last, M[i], M_last*M[i]))
             print('    biases: M_{} = {}'.format(Ngconv+i+1, M[i]))
-        '''
+        """
         # Store attributes and bind operations.
         self.L, self.D, self.U, self.F, self.K, self.p, self.nz, self.F_0 = L, D, U, F, K, p, nz, F_0
         self.which_loss = which_loss
@@ -1168,6 +1186,8 @@ class coma(base_model):
         self.brelu = getattr(self, brelu)
         self.pool = getattr(self, pool)
         self.unpool = getattr(self, unpool)
+        
+        self.std = std
         
         #self.loss_weights = weight_tensor
         # Build the computational graph.
@@ -1280,7 +1300,7 @@ class coma(base_model):
                 with tf.variable_scope('conv{}'.format(i+1)):
                     with tf.name_scope('filter'):
                         x = self.filter(x, self.L[i], self.F[i], self.K[i])
-                        print(self.L[i], self.F[i], self.K[i])
+                        #print(self.L[i], self.F[i], self.K[i])
                     with tf.name_scope('bias_relu'):
                         x = self.brelu(x)
                     with tf.name_scope('pooling'):
@@ -1309,12 +1329,13 @@ class coma(base_model):
                         x = self.unpool(x, self.U[-i-1])
                     with tf.name_scope('filter'):
                         x = self.filter(x, self.L[len(self.F)-i-1], self.F[-i-1], self.K[-i-1])
-                        print(self.L[-(i+1)], self.F[-(i+1)], self.K[-(i+1)])
+                        #print(self.L[-(i+1)], self.F[-(i+1)], self.K[-(i+1)])
                     with tf.name_scope('bias_relu'):
                         x = self.brelu(x)
 
             with tf.name_scope('outputs'):
-                x = self.filter(x, self.L[0], int(self.F_0), self.K[0])
+                #x = self.filter(x, self.L[0], int(self.F_0), self.K[0])
+                x = tf.keras.layers.Dense(3)(x)
 
         return x
 

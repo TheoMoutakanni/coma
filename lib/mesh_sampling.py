@@ -3,9 +3,12 @@ import heapq
 import numpy as np
 import os
 import scipy.sparse as sp
-from psbody.mesh import Mesh
+from mesh import Mesh
 #from psbody.mesh.topology.decimation import vertex_quadrics
-from opendr.topology import get_vert_connectivity, get_vertices_per_edge
+from connectivity import get_vert_connectivity, get_vertices_per_edge
+
+import pyigl as igl
+from iglhelpers import p2e,e2p
 
 
 def vertex_quadrics(mesh):
@@ -40,7 +43,40 @@ def setup_deformation_transfer(source, target, use_normals=False):
     cols = np.zeros(3 * target.v.shape[0])
     coeffs_v = np.zeros(3 * target.v.shape[0])
     coeffs_n = np.zeros(3 * target.v.shape[0])
+    
+    print("Computing nearest vertices")
+    
+    P = p2e(target.v)
+    V = p2e(source.v)
+    F = p2e(source.f)
+    
+    sqrD = igl.eigen.MatrixXd()
+    nearest_faces = igl.eigen.MatrixXi()
+    nearest_vertices = igl.eigen.MatrixXd()
+    igl.point_mesh_squared_distance(P,V,F,sqrD,nearest_faces,nearest_vertices)
+    
+    print("Computing barycentric coordinates")
+    
+    coeffs_v = igl.eigen.MatrixXd()
+    Va,Vb,Vc = igl.eigen.MatrixXd(),igl.eigen.MatrixXd(),igl.eigen.MatrixXd()
+    F2 = igl.eigen.MatrixXi()
+    xyz = p2e(np.array([0,1,2]))
+    
+    igl.slice(F,nearest_faces,xyz,F2)
+    igl.slice(V,F2.col(0),xyz,Va)
+    igl.slice(V,F2.col(1),xyz,Vb)
+    igl.slice(V,F2.col(2),xyz,Vc)
+    
+    igl.barycentric_coordinates(nearest_vertices,Va,Vb,Vc,coeffs_v)
+    
+    nearest_faces = e2p(nearest_faces)
+    coeffs_v = e2p(coeffs_v).ravel()
+    
+    rows = np.array([i for i in range(target.v.shape[0]) for _ in range(3)])
+    cols = source.f[nearest_faces].ravel()
 
+    
+    """
     nearest_faces, nearest_parts, nearest_vertices = source.compute_aabb_tree().nearest(target.v, True)
     nearest_faces = nearest_faces.ravel().astype(np.int64)
     nearest_parts = nearest_parts.ravel().astype(np.int64)
@@ -74,6 +110,7 @@ def setup_deformation_transfer(source, target, use_normals=False):
         else:
             # Closest surface point a vertex
             coeffs_v[3 * i + n_id - 4] = 1.0
+        """
 
     #    if use_normals:
     #        A = np.vstack((vn[nearest_f])).T
@@ -106,7 +143,7 @@ def qslim_decimator_transformer(mesh, factor=None, n_verts_desired=None):
 
     # fill out a sparse matrix indicating vertex-vertex adjacency
     # from psbody.mesh.topology.connectivity import get_vertices_per_edge
-    vert_adj = get_vertices_per_edge(mesh.v, mesh.f)
+    vert_adj = get_vertices_per_edge(mesh)
     # vert_adj = sp.lil_matrix((len(mesh.v), len(mesh.v)))
     # for f_idx in range(len(mesh.f)):
     #     vert_adj[mesh.f[f_idx], mesh.f[f_idx]] = 1
@@ -216,7 +253,7 @@ def _get_sparse_transform(faces, num_original_verts):
 
     return (new_faces, mtx)
 
-def generate_transform_matrices(mesh, factors):
+def generate_transform_matrices(mesh, factors): #TODO
     """Generates len(factors) meshes, each of them is scaled by factors[i] and
        computes the transformations between them.
     
@@ -229,7 +266,9 @@ def generate_transform_matrices(mesh, factors):
 
     factors = map(lambda x: 1.0/x, factors)
     M,A,D,U = [], [], [], []
-    A.append(get_vert_connectivity(mesh.v, mesh.f))
+    #A.append(get_vert_connectivity(mesh))
+    A.append(mesh)
+
     M.append(mesh)
 
     for factor in factors:
@@ -238,7 +277,9 @@ def generate_transform_matrices(mesh, factors):
         new_mesh_v = ds_D.dot(M[-1].v)
         new_mesh = Mesh(v=new_mesh_v,f=ds_f)
         M.append(new_mesh)
-        A.append(get_vert_connectivity(new_mesh.v, new_mesh.f))
+        #A.append(get_vert_connectivity(new_mesh))
+        A.append(new_mesh)
+
         U.append(setup_deformation_transfer(M[-1], M[-2]))
 
     return M,A,D,U
